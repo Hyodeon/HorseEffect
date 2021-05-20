@@ -5,6 +5,8 @@ using UnityEngine;
 using com.rfilkov.kinect;
 
 
+
+
 public class FollowIt : MonoBehaviour
 {
 
@@ -28,14 +30,15 @@ public class FollowIt : MonoBehaviour
     // 추가적으로 사람이 발견안되면 RESTING으로 가서 alpha를 없애고 사라짐.
 
     // 플레이어 좌표를 매핑하는 변수 ( 배수 설정 -> 실제 배율에 맞춰야함. )
-    public int MapDegree = 13;
+    public int MapDegree = 10;
 
 
     // 각 state별 진행 시간을 결정하는 변수
     public int POSITIONING_TIME = 3;
     public int ROTATION_TIME = 4;
-    public int FOLLOWING_TIME = 8;
-    public int IDLE_TIME = 10;
+    public int FOLLOWING_TIME = 7;
+    public int IDLE_TIME = 8;
+    public int RESTING_TIME = 3;
 
     // 이동속도 설정하는 변수
     public float moveSpeed = 5.0f;
@@ -44,14 +47,10 @@ public class FollowIt : MonoBehaviour
     private Transform m_transform = null;
     // 말의 애니메이션 받아옴
     private Animator anim;
+    //private lookAnimater lAnim;
 
     // 키넥트매니저 인스턴스 받아올 놈
     private KinectManager m_KinectMg = null;
-
-    // Renderer를 받아올 변수들
-    private GameObject[] rdrGameObject = new GameObject[3];
-    public GameObject headTargetObject = null;
-    private SkinnedMeshRenderer[] rdr = new SkinnedMeshRenderer[3];
 
     // 각 키넥트로부터 받은 유저들 위치 저장하는 벡터 동적할당
     private Vector3[] user = new Vector3[3];
@@ -60,8 +59,6 @@ public class FollowIt : MonoBehaviour
     static Vector3 Target;
 
     // Delay 함수에서 사용할 스태틱 변수 제작
-    public float delayLength = 0;
-    static bool onDelay;
     public float delay = 0;
     bool isDoneOnce = false;
     bool pending = false;
@@ -94,6 +91,35 @@ public class FollowIt : MonoBehaviour
         return temp;
     }
 
+    private void toNextMode(bool isTriggered)
+    {
+        State++;
+        isDoneOnce = false;
+        pending = false;
+
+        if (State == STATE_ROTATING)
+        {
+            if (Vector3.Dot(Vector3.right * (Target.x - m_transform.position.x), Vector3.right) < 0)
+                moveDir = -moveDir;
+        }
+        else if (State == STATE_FOLLOWING)
+            anim.SetBool("isWalk", false);
+        else if (State == STATE_IDLE)
+            State = STATE_POSITIONING;
+    }
+
+    private float min_to_max(float input, float _min, float _max)
+    {
+        float calc = input;
+
+        if (calc >= _max)
+            calc = _max;
+        else if (calc <= _min)
+            calc = _min;
+
+        return calc;
+    }
+
     // Start is called before the first frame update
     void Start()
     {
@@ -101,15 +127,9 @@ public class FollowIt : MonoBehaviour
         m_transform = this.gameObject.GetComponent<Transform>();
         anim = this.gameObject.GetComponent<Animator>();
 
-        for (int i = 1; i < 4; i++)
-        {
-            rdrGameObject[i - 1] = this.transform.GetChild(i).gameObject;
-            rdr[i - 1] = rdrGameObject[i - 1].GetComponent<SkinnedMeshRenderer>();
-        }
-
         m_KinectMg = KinectManager.Instance;
+        //lAnim = this.GameObject.GetComponent<lookAnimater>;
 
-        headTargetObject = GameObject.Find("HorseTarget");
         anim.SetBool("isWalk", false);
     }
 
@@ -127,6 +147,8 @@ public class FollowIt : MonoBehaviour
                 delay = FOLLOWING_TIME;
             else if (State == STATE_IDLE)
                 delay = IDLE_TIME;
+            else if (State == STATE_RESTING)
+                delay = RESTING_TIME;
 
             pending = true;
         }
@@ -135,12 +157,7 @@ public class FollowIt : MonoBehaviour
         {
             case STATE_POSITIONING: // 사람을 찾는 상태 ====================================================================
 
-                if (delay <= 0 && isDoneOnce)
-                {
-                    State++;
-                    isDoneOnce = false;
-                    pending = false;
-                }
+                toNextMode(delay <= 0 && isDoneOnce); // 만약 조건이 맞으면 다음 모드로 넘어감
 
                 Target = m_KinectMg.GetUserPosition(m_KinectMg.GetUserIdByIndex(0)) * MapDegree;
 
@@ -156,26 +173,15 @@ public class FollowIt : MonoBehaviour
 
             //==============================================================================================================
 
-            case STATE_ROTATING: // 찾은 후 말 방향 회전 ====================================================================
+            case STATE_ROTATING: // 찾은 후 말 방향 회전 ==ol==================================================================
 
 
-                if (delay <= 0 && isDoneOnce)
-                {
-                    State++;
-
-                    if (Vector3.Dot(Vector3.right * (Target.x - m_transform.position.x), Vector3.right) < 0)
-                    {
-                        moveDir = -moveDir;
-                    }
-
-                    isDoneOnce = false;
-                    pending = false;
-                }
-
+                toNextMode(delay <= 0 && isDoneOnce);
 
                 dist = Mathf.Abs(Target.x - m_transform.position.x);
 
-                m_transform.rotation = Quaternion.LookRotation(Vector3.right * (Target.x - m_transform.position.x));
+                if(isDetected)
+                    m_transform.rotation = Quaternion.LookRotation(Vector3.right * (Target.x - m_transform.position.x));
 
                 isDoneOnce = true;
 
@@ -188,27 +194,29 @@ public class FollowIt : MonoBehaviour
 
             case STATE_FOLLOWING: // 찾은 사람을 따라감 =====================================================================
 
-                if ((delay <= 0 && isDoneOnce) || dist <= 1)
-                {
-                    State++;
-                    isDoneOnce = false;
-                    pending = false;
-                }
+                if(dist <= 2f)
+                    anim.SetBool("isWalk", false);
 
-                anim.SetBool("isWalk", true);
+                toNextMode((delay <= 0 || dist <= 2f) && isDoneOnce);
+
 
                 dist = Mathf.Abs(Target.x - m_transform.position.x);
 
-                animSpeed = dist / 6f - 0.3f;
+                animSpeed = min_to_max(dist / 6f - 0.3f, 0.5f, 1f);
                 anim.SetFloat("walkspeed", animSpeed);
+
+
                 moveSpeed = dist / 10 * 1.3f;
+
 
                 m_transform.Translate(moveDir.normalized * moveSpeed * Time.deltaTime);
 
-                isDoneOnce = true;
 
+
+                isDoneOnce = true;
                 delay -= Time.deltaTime;
 
+                anim.SetBool("isWalk", true);
 
                 break;
 
@@ -216,23 +224,9 @@ public class FollowIt : MonoBehaviour
 
             case STATE_IDLE: // 따라가서 멈추고 사람을 바라봄 ================================================================
 
-                if ((GetRegionByTarget(headTargetObject.transform, 1.2f).LeftEnd
-                    <= m_KinectMg.GetUserPosition(m_KinectMg.GetUserIdByIndex(0)).x) &&
-                    (m_KinectMg.GetUserPosition(m_KinectMg.GetUserIdByIndex(0)).x
-                    >= GetRegionByTarget(headTargetObject.transform, 1.2f).RightEnd))
-                    isStillDetected = true;
-                else
-                    isStillDetected = false;
-                // 유저가 말이 추적할만한 거리 내부에 존재한다면 말은 유저를 쳐다보며 기다릴 것임.
-                // 아니라면 말은 다른 대상을 탐색하기 전까지 대기상태 진입
+                isStillDetected = false;
 
-
-                if (delay <= 0 && isDoneOnce && !isStillDetected)
-                {
-                    State = STATE_RESTING;
-                    isDoneOnce = false;
-                    pending = false;
-                }
+                toNextMode(delay <= 0 && isDoneOnce && !isStillDetected);
 
                 delay -= Time.deltaTime;
 
@@ -245,12 +239,14 @@ public class FollowIt : MonoBehaviour
 
             case STATE_RESTING: // 사람 탐지 X라서 쉼 =======================================================================
 
+                /*
                 if (!((GetRegionByTarget(headTargetObject.transform, 1.2f).LeftEnd
                     <= m_KinectMg.GetUserPosition(m_KinectMg.GetUserIdByIndex(0)).x) &&
                     (m_KinectMg.GetUserPosition(m_KinectMg.GetUserIdByIndex(0)).x
                     >= GetRegionByTarget(headTargetObject.transform, 1.2f).RightEnd)))
                     State = STATE_POSITIONING;
 
+                */
                 break;
         }
 
